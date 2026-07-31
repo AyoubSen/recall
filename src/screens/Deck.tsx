@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react'
 import { FiltersDialog } from '../components/FiltersDialog'
+import { Poster } from '../components/Poster'
 import { SwipeCard } from '../components/SwipeCard'
 import { Button, EmptyState, IconButton, cx } from '../components/ui'
 import { catalogProvider } from '../data/provider'
@@ -203,10 +204,26 @@ export function Deck({ onOpenLibrary }: { onOpenLibrary: () => void }) {
         {current ? (
           <>
             {next && (
+              // The card peeking out from under the deck. Only a sliver shows at
+              // rest, but the whole thing is revealed while the top card flies
+              // out — so it carries a blurred teaser of the next title rather
+              // than an empty panel. Blurred on purpose: enough to read the
+              // shape and mood, not enough to recognise the title early.
               <div
                 aria-hidden
-                className="absolute inset-x-4 -bottom-3 top-6 rounded-card border border-ink-700 bg-ink-850 shadow-deck"
-              />
+                className="absolute inset-x-4 -bottom-3 top-6 overflow-hidden rounded-card border border-ink-700 bg-ink-850 shadow-deck"
+              >
+                {/* Poster's `large` mode already dims its own backdrop, so this
+                    wrapper only softens — adding brightness reduction here too
+                    multiplies out to near-black. */}
+                <Poster
+                  key={next.id}
+                  title={next}
+                  large
+                  className="h-full w-full scale-105 blur-md brightness-75"
+                />
+                <div className="absolute inset-0 bg-ink-900/45" />
+              </div>
             )}
             <SwipeCard key={current.id} title={shown ?? current} onResolve={commit} />
           </>

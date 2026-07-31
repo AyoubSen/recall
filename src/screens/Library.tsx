@@ -146,7 +146,10 @@ export function Library() {
           body="Sort a few titles on the Remember tab and they will land in this list straight away."
         />
       ) : prefs.libraryView === 'grid' ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+        /* Column count is driven by the status row inside each card: five
+           controls need roughly 260px of card to stay tappable, so the grid
+           widens a step at a time rather than jumping straight to three. */
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {items.map((t) => (
             <PosterCard
               key={t.id}

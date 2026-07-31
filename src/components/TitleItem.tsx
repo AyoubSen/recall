@@ -34,7 +34,8 @@ export function StatusActions({
           title={label}
           className={cx(
             'inline-flex items-center justify-center rounded-control border font-semibold transition-colors',
-            compact ? 'h-9 flex-1' : 'h-10 gap-2 px-3 text-xs',
+            // Touch-sized by default, tightened once a pointer is likely.
+            compact ? 'h-11 flex-1 sm:h-9' : 'h-11 gap-2 px-3 text-xs sm:h-10',
             current === status
               ? active
               : 'border-ink-700 bg-ink-850 text-text-low hover:border-ink-600 hover:text-text-hi active:bg-ink-700',
@@ -52,7 +53,7 @@ export function StatusActions({
           title="Remove from library"
           className={cx(
             'inline-flex items-center justify-center rounded-control border border-ink-700 bg-ink-850 text-text-low transition-colors hover:border-ink-600 hover:text-text-hi active:bg-ink-700',
-            compact ? 'h-9 w-9 shrink-0' : 'h-10 w-10',
+            compact ? 'h-11 w-11 shrink-0 sm:h-9 sm:w-9' : 'h-11 w-11 sm:h-10 sm:w-10',
           )}
         >
           <RotateCcw size={15} />

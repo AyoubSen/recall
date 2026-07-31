@@ -71,7 +71,7 @@ export function Deck({ onOpenLibrary }: { onOpenLibrary: () => void }) {
     usingTmdb,
   } = useStore()
 
-  const { deck, loading, error, exhausted, retry } = useDiscovery(filters, statuses)
+  const { deck, loading, error, exhausted, retry, diagnostics } = useDiscovery(filters, statuses)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [details, setDetails] = useState<Title | null>(null)
   const committed = useRef<string | null>(null)
@@ -221,16 +221,6 @@ export function Deck({ onOpenLibrary }: { onOpenLibrary: () => void }) {
               </Button>
             }
           />
-        ) : loading ? (
-          <FrameMessage
-            icon={<Loader2 size={22} className="animate-spin" />}
-            title="Finding titles you might recognise"
-            body={
-              usingTmdb
-                ? 'Loading a fresh page from TMDB.'
-                : 'Loading from the bundled demo catalogue.'
-            }
-          />
         ) : exhausted ? (
           <FrameMessage
             icon={<PartyPopper size={22} />}
@@ -246,10 +236,16 @@ export function Deck({ onOpenLibrary }: { onOpenLibrary: () => void }) {
             }
           />
         ) : (
+          // Not proven exhausted: a refill is running or about to. Never show
+          // "Deck cleared" here.
           <FrameMessage
             icon={<Loader2 size={22} className="animate-spin" />}
-            title="Preparing your deck"
-            body="Just a moment."
+            title="Finding more titles"
+            body={
+              usingTmdb
+                ? 'Loading further pages from TMDB.'
+                : 'Loading from the bundled demo catalogue.'
+            }
           />
         )}
       </div>
@@ -287,6 +283,15 @@ export function Deck({ onOpenLibrary }: { onOpenLibrary: () => void }) {
             </span>
           )}
         </p>
+        {import.meta.env.DEV && (
+          <p className="font-mono text-[10px] leading-relaxed text-text-low/70">
+            m t{diagnostics.movie.tier} p{diagnostics.movie.page}/{diagnostics.movie.totalPages}
+            {diagnostics.movie.exhausted ? ' END' : ''} · tv t{diagnostics.tv.tier} p
+            {diagnostics.tv.page}/{diagnostics.tv.totalPages}
+            {diagnostics.tv.exhausted ? ' END' : ''} · q{diagnostics.queue} s{diagnostics.staging} ·
+            done {diagnostics.classified} · pages {diagnostics.pagesThisCycle}
+          </p>
+        )}
         <p className="hidden items-center gap-1.5 text-xs sm:flex">
           <Key>←</Key> not watched
           <Key>→</Key> watched

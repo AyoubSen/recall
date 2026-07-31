@@ -4,7 +4,8 @@ export interface Page<T> {
   items: T[]
   page: number
   totalPages: number
-  /** True when there is nothing further to fetch for this query. */
+  /** True when this specific query (type + tier) has no further pages. Not a
+   *  statement about the catalogue as a whole. */
   exhausted: boolean
 }
 
@@ -19,6 +20,9 @@ export interface DiscoveryRequest {
   /** Which source to pull from — the deck balances the two itself. */
   type: MediaType
   page: number
+  /** Index into the provider's vote-count ladder. Each tier is its own query
+   *  with its own total_pages. */
+  tier?: number
   signal?: AbortSignal
 }
 

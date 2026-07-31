@@ -20,28 +20,28 @@ interface TmdbListResponse {
 const MAX_PAGES = 500
 
 /**
- * Vote-count floors per popularity mode. For "balanced" the floor steps down
- * as pages deepen: mainstream titles first, then progressively broader ones,
- * rather than one fixed global sort forever.
+ * Vote-count floors per popularity mode, as an ordered ladder.
+ *
+ * Each rung is a *complete* discover query with its own `total_pages`. Running
+ * out of pages on one rung means that rung is finished, not that the catalogue
+ * is — the deck drops to the next rung and keeps going. Mainstream titles come
+ * first, then progressively broader ones.
  */
-function voteFloor(mode: PopularityFloor, page: number, type: MediaType): number {
+export function voteLadder(mode: PopularityFloor, type: MediaType): number[] {
   const tv = type === 'series'
-  if (mode === 'popular') return tv ? 400 : 1000
-  if (mode === 'everything') return 0
-  if (page <= 5) return tv ? 300 : 800
-  if (page <= 15) return tv ? 100 : 250
-  if (page <= 40) return tv ? 25 : 60
-  return 0
+  if (mode === 'popular') return tv ? [400, 150, 40] : [1000, 400, 100]
+  if (mode === 'balanced') return tv ? [300, 80, 20, 0] : [800, 200, 50, 0]
+  return [0]
 }
 
-function discoveryParams(filters: Filters, type: MediaType, page: number) {
+function discoveryParams(filters: Filters, type: MediaType, page: number, tier: number) {
   const movie = type === 'movie'
   const params: Record<string, string | number | boolean | undefined> = {
     include_adult: false,
     language: 'en-US',
     page,
     sort_by: 'popularity.desc',
-    'vote_count.gte': voteFloor(filters.popularity, page, type),
+    'vote_count.gte': voteLadder(filters.popularity, type)[tier] ?? 0,
   }
 
   if (movie) {
@@ -75,8 +75,8 @@ export const tmdbProvider: CatalogProvider = {
   id: 'tmdb',
   maxPages: MAX_PAGES,
 
-  async getDiscoveryTitles({ filters, type, page, signal }: DiscoveryRequest): Promise<Page<Title>> {
-    const params = discoveryParams(filters, type, page)
+  async getDiscoveryTitles({ filters, type, page, tier = 0, signal }: DiscoveryRequest): Promise<Page<Title>> {
+    const params = discoveryParams(filters, type, page, tier)
     if (!params) return { items: [], page, totalPages: 0, exhausted: true }
 
     const data = await tmdbGet<TmdbListResponse>(
@@ -90,9 +90,9 @@ export const tmdbProvider: CatalogProvider = {
       items: normalizeRows(data.results, type),
       page,
       totalPages,
-      // An empty page is not proof of exhaustion on its own, but combined with
-      // being at/over the last page it is.
-      exhausted: page >= totalPages || (data.results?.length ?? 0) === 0,
+      // Tier-level only: this rung of the ladder has no further pages. The
+      // caller decides whether the catalogue itself is finished.
+      exhausted: totalPages > 0 && page >= totalPages,
     }
   },
 

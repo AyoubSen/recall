@@ -39,7 +39,7 @@ export const localProvider: CatalogProvider = {
     const start = (page - 1) * LOCAL_PAGE_SIZE
     const items = pool.slice(start, start + LOCAL_PAGE_SIZE)
     const totalPages = Math.max(1, Math.ceil(pool.length / LOCAL_PAGE_SIZE))
-    return { items, page, totalPages, exhausted: page >= totalPages || items.length === 0 }
+    return { items, page, totalPages, exhausted: page >= totalPages }
   },
 
   async searchTitles(query: string, page = 1): Promise<Page<Title>> {

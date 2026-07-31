@@ -80,7 +80,13 @@ export function PosterCard({
         <div className="space-y-1">
           <h3 className="line-clamp-2 text-[15px] font-semibold leading-snug">{title.title}</h3>
           <p className="text-xs text-text-low">
-            {title.year} · {title.type === 'movie' ? 'Movie' : 'Series'} · ★ {title.rating.toFixed(1)}
+            {[
+              title.year || 'Year unknown',
+              title.type === 'movie' ? 'Movie' : 'Series',
+              title.rating > 0 ? `★ ${title.rating.toFixed(1)}` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </p>
         </div>
         <div className="mt-auto">
@@ -113,8 +119,14 @@ export function TitleRow({
           <StatusChip status={status} />
         </div>
         <p className="text-xs text-text-low">
-          {title.year} · {title.type === 'movie' ? 'Movie' : 'Series'} · {title.genres.slice(0, 2).join(', ')} · ★{' '}
-          {title.rating.toFixed(1)}
+          {[
+            title.year || 'Year unknown',
+            title.type === 'movie' ? 'Movie' : 'Series',
+            title.genres.slice(0, 2).join(', ') || null,
+            title.rating > 0 ? `★ ${title.rating.toFixed(1)}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
         </p>
         {reasons?.length ? (
           <div className="flex flex-wrap gap-2 pt-1">

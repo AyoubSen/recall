@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { ALL_GENRES, ALL_LANGUAGES, YEAR_MAX, YEAR_MIN } from '../data/catalog'
+import { CANONICAL_GENRES, LANGUAGES } from '../data/tmdb/genres'
+import { YEAR_MAX, YEAR_MIN } from '../store'
 import type { Filters, MediaType, PopularityFloor } from '../types'
 import { Button, Chip, Dialog } from './ui'
 
@@ -58,7 +59,7 @@ export function FiltersForm({
 
       <Field label="Genres" hint={value.genres.length ? `${value.genres.length} selected` : 'All'}>
         <div className="flex flex-wrap gap-2.5">
-          {ALL_GENRES.map((g) => (
+          {CANONICAL_GENRES.map((g) => (
             <Chip
               key={g}
               selected={value.genres.includes(g)}
@@ -72,13 +73,13 @@ export function FiltersForm({
 
       <Field label="Languages" hint={value.languages.length ? `${value.languages.length} selected` : 'All'}>
         <div className="flex flex-wrap gap-2.5">
-          {ALL_LANGUAGES.map((l) => (
+          {LANGUAGES.map(({ name }) => (
             <Chip
-              key={l}
-              selected={value.languages.includes(l)}
-              onClick={() => onChange({ ...value, languages: toggle(value.languages, l) })}
+              key={name}
+              selected={value.languages.includes(name)}
+              onClick={() => onChange({ ...value, languages: toggle(value.languages, name) })}
             >
-              {l}
+              {name}
             </Chip>
           ))}
         </div>

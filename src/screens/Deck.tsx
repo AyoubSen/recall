@@ -1,10 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Bookmark, Check, HelpCircle, PartyPopper, SlidersHorizontal, Undo2, X } from 'lucide-react'
+import {
+  Bookmark,
+  Check,
+  HelpCircle,
+  Loader2,
+  PartyPopper,
+  SlidersHorizontal,
+  Undo2,
+  WifiOff,
+  X,
+} from 'lucide-react'
 import { FiltersDialog } from '../components/FiltersDialog'
 import { SwipeCard } from '../components/SwipeCard'
 import { Button, EmptyState, IconButton, cx } from '../components/ui'
+import { catalogProvider } from '../data/provider'
+import { useDiscovery } from '../data/useDiscovery'
 import { useStore } from '../store'
-import type { TitleStatus } from '../types'
+import type { Title, TitleStatus } from '../types'
 
 const ACTION_BUTTONS: {
   status: TitleStatus
@@ -43,20 +55,31 @@ const ACTION_BUTTONS: {
   },
 ]
 
+/** Fixed card frame — the action row must never move between titles. */
+const CARD_FRAME = { height: 'clamp(400px, calc(100vh - 366px), 580px)' } as const
+
 export function Deck({ onOpenLibrary }: { onOpenLibrary: () => void }) {
-  const { deck, setStatus, undo, history, sessionCount, watchedCount, filters, setFilters } =
-    useStore()
+  const {
+    setStatus,
+    undo,
+    history,
+    sessionCount,
+    watchedCount,
+    filters,
+    setFilters,
+    statuses,
+    usingTmdb,
+  } = useStore()
+
+  const { deck, loading, error, exhausted, retry } = useDiscovery(filters, statuses)
   const [filtersOpen, setFiltersOpen] = useState(false)
-  /**
-   * Id of the last title whose status was written. Guards against double
-   * classification. Using an id rather than a timed lock means the guard
-   * clears itself the moment a different card reaches the top, so the deck can
-   * never wedge.
-   */
+  const [details, setDetails] = useState<Title | null>(null)
   const committed = useRef<string | null>(null)
 
   const current = deck[0]
   const next = deck[1]
+  /** Details are merged in for the visible card only, never for the buffer. */
+  const shown = details && current && details.id === current.id ? details : current
 
   // Preload the next few posters so a card never appears without artwork.
   useEffect(() => {
@@ -67,22 +90,38 @@ export function Deck({ onOpenLibrary }: { onOpenLibrary: () => void }) {
     }
   }, [deck])
 
-  /**
-   * The single place a status is written. Buttons, keys and finished drags all
-   * funnel through here, and the id guard means one card can never be
-   * classified twice however the inputs overlap.
-   */
+  // Lazily enrich the current card (runtime, seasons, director) — one request
+  // per shown card, not one per buffered candidate.
+  useEffect(() => {
+    if (!current || current.detailed) {
+      setDetails(null)
+      return
+    }
+    let cancelled = false
+    const controller = new AbortController()
+    catalogProvider
+      .getTitleDetails(current.id, controller.signal)
+      .then((d) => {
+        if (!cancelled && d) setDetails(d)
+      })
+      .catch(() => {
+        /* the card stays usable on discovery metadata alone */
+      })
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [current])
+
   const commit = useCallback(
     (status: TitleStatus) => {
       if (!current || committed.current === current.id) return
       committed.current = current.id
-      setStatus(current.id, status)
+      setStatus(shown ?? current, status)
     },
-    [current, setStatus],
+    [current, shown, setStatus],
   )
 
-  // Keyboard classification. `event.repeat` is ignored so holding a key cannot
-  // race through the deck.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null
@@ -159,66 +198,103 @@ export function Deck({ onOpenLibrary }: { onOpenLibrary: () => void }) {
         </div>
       </div>
 
-      {current ? (
-        <>
-          {/* Fixed height so the action row never moves between titles, but
-              viewport-relative so the buttons stay visible on short laptops. */}
-          <div
-            className="relative w-full"
-            style={{ height: 'clamp(400px, calc(100vh - 366px), 580px)' }}
-          >
+      {/* The frame keeps its size in every state so nothing below it jumps. */}
+      <div className="relative w-full" style={CARD_FRAME}>
+        {current ? (
+          <>
             {next && (
               <div
                 aria-hidden
                 className="absolute inset-x-4 -bottom-3 top-6 rounded-card border border-ink-700 bg-ink-850 shadow-deck"
               />
             )}
-            <SwipeCard key={current.id} title={current} onResolve={commit} />
-          </div>
-
-          <div className="grid grid-cols-4 gap-3">
-            {ACTION_BUTTONS.map(({ status, label, hint, icon: Icon, cls }) => (
-              <button
-                key={status}
-                onClick={() => commit(status)}
-                title={`${label} (${hint})`}
-                className={cx(
-                  'flex h-20 flex-col items-center justify-center gap-1.5 rounded-control border bg-ink-900 transition-colors',
-                  cls,
-                )}
-              >
-                <Icon size={22} />
-                <span className="text-[11px] font-semibold">{label}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="flex flex-col items-center gap-2 text-sm text-text-low">
-            <p>{deck.length} left with these filters</p>
-            <p className="hidden items-center gap-1.5 text-xs sm:flex">
-              <Key>←</Key> not watched
-              <Key>→</Key> watched
-              <Key>↑</Key> watchlist
-              <Key>S</Key> not sure
-              <Key>⌘Z</Key> undo
-            </p>
-          </div>
-        </>
-      ) : (
-        <EmptyState
-          icon={<PartyPopper size={22} />}
-          title="Deck cleared"
-          body="You have sorted every title matching your current filters. Widen the filters to keep going, or review what you have remembered so far."
-          action={
-            <div className="flex flex-wrap justify-center gap-3">
-              <Button variant="primary" onClick={() => setFiltersOpen(true)}>
-                Change filters
+            <SwipeCard key={current.id} title={shown ?? current} onResolve={commit} />
+          </>
+        ) : error ? (
+          <FrameMessage
+            icon={<WifiOff size={22} />}
+            title="Could not load more titles"
+            body={error}
+            action={
+              <Button variant="primary" onClick={retry}>
+                Try again
               </Button>
-              <Button onClick={onOpenLibrary}>Open library</Button>
-            </div>
-          }
-        />
-      )}
+            }
+          />
+        ) : loading ? (
+          <FrameMessage
+            icon={<Loader2 size={22} className="animate-spin" />}
+            title="Finding titles you might recognise"
+            body={
+              usingTmdb
+                ? 'Loading a fresh page from TMDB.'
+                : 'Loading from the bundled demo catalogue.'
+            }
+          />
+        ) : exhausted ? (
+          <FrameMessage
+            icon={<PartyPopper size={22} />}
+            title="Deck cleared"
+            body="You have sorted everything matching these filters. Widen them to keep going."
+            action={
+              <div className="flex flex-wrap justify-center gap-3">
+                <Button variant="primary" onClick={() => setFiltersOpen(true)}>
+                  Change filters
+                </Button>
+                <Button onClick={onOpenLibrary}>Open library</Button>
+              </div>
+            }
+          />
+        ) : (
+          <FrameMessage
+            icon={<Loader2 size={22} className="animate-spin" />}
+            title="Preparing your deck"
+            body="Just a moment."
+          />
+        )}
+      </div>
+
+      <div className="grid grid-cols-4 gap-3">
+        {ACTION_BUTTONS.map(({ status, label, hint, icon: Icon, cls }) => (
+          <button
+            key={status}
+            onClick={() => commit(status)}
+            disabled={!current}
+            title={`${label} (${hint})`}
+            className={cx(
+              'flex h-20 flex-col items-center justify-center gap-1.5 rounded-control border bg-ink-900 transition-colors',
+              'disabled:opacity-40 disabled:pointer-events-none',
+              cls,
+            )}
+          >
+            <Icon size={22} />
+            <span className="text-[11px] font-semibold">{label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-col items-center gap-2 text-sm text-text-low">
+        <p className="flex items-center gap-2">
+          {deck.length > 0 && <>{deck.length} queued</>}
+          {loading && deck.length > 0 && (
+            <span className="inline-flex items-center gap-1.5 text-xs">
+              <Loader2 size={12} className="animate-spin" /> loading more
+            </span>
+          )}
+          {!usingTmdb && (
+            <span className="rounded-full border border-ink-700 px-2 py-0.5 text-[11px]">
+              demo catalogue
+            </span>
+          )}
+        </p>
+        <p className="hidden items-center gap-1.5 text-xs sm:flex">
+          <Key>←</Key> not watched
+          <Key>→</Key> watched
+          <Key>↑</Key> watchlist
+          <Key>S</Key> not sure
+          <Key>⌘Z</Key> undo
+        </p>
+      </div>
 
       <FiltersDialog
         open={filtersOpen}
@@ -226,6 +302,26 @@ export function Deck({ onOpenLibrary }: { onOpenLibrary: () => void }) {
         value={filters}
         onApply={setFilters}
       />
+    </div>
+  )
+}
+
+function FrameMessage({
+  icon,
+  title,
+  body,
+  action,
+}: {
+  icon: React.ReactNode
+  title: string
+  body: string
+  action?: React.ReactNode
+}) {
+  return (
+    <div className="absolute inset-0 flex items-center">
+      <div className="w-full">
+        <EmptyState icon={icon} title={title} body={body} action={action} />
+      </div>
     </div>
   )
 }

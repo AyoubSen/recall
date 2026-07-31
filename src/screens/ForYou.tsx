@@ -1,24 +1,39 @@
 import { useEffect, useState } from 'react'
-import { Sparkles } from 'lucide-react'
+import { Loader2, Sparkles } from 'lucide-react'
 import { TitleRow } from '../components/TitleItem'
 import { Button, EmptyState } from '../components/ui'
-import { localProvider, type Recommendation } from '../data/provider'
+import { catalogProvider, type Recommendation } from '../data/provider'
 import { useStore } from '../store'
 
 export function ForYou({ onStart }: { onStart: () => void }) {
-  const { profile, statuses, statusOf, setStatus, resetStatus, watchedCount } = useStore()
+  const { profile, statuses, statusOf, setStatus, resetStatus, watchedCount, knownTitles } =
+    useStore()
   const [recs, setRecs] = useState<Recommendation[]>([])
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     // Anything already resolved (watched, not watched, watchlist, unsure) is excluded.
     const exclude = new Set(Object.keys(statuses))
+    const controller = new AbortController()
     let cancelled = false
-    localProvider.getRecommendations(profile, exclude).then((r) => {
-      if (!cancelled) setRecs(r)
-    })
+    setLoading(true)
+    catalogProvider
+      .getRecommendations(profile, exclude, knownTitles, controller.signal)
+      .then((r) => {
+        if (!cancelled) setRecs(r)
+      })
+      .catch(() => {
+        if (!cancelled) setRecs([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
     return () => {
       cancelled = true
+      controller.abort()
     }
+    // knownTitles is only used for genre weighting; recompute on status change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, statuses])
 
   return (
@@ -42,11 +57,17 @@ export function ForYou({ onStart }: { onStart: () => void }) {
             </Button>
           }
         />
+      ) : loading && recs.length === 0 ? (
+        <EmptyState
+          icon={<Loader2 size={22} className="animate-spin" />}
+          title="Building your recommendations"
+          body="Looking at what the titles you have watched are related to."
+        />
       ) : recs.length === 0 ? (
         <EmptyState
           icon={<Sparkles size={22} />}
-          title="You have sorted the whole catalogue"
-          body="There is nothing left in this prototype's local catalogue to recommend."
+          title="No recommendations yet"
+          body="Nothing new came back for the titles you have watched so far. Sort a few more and check again."
         />
       ) : (
         <div className="space-y-3">
@@ -56,7 +77,7 @@ export function ForYou({ onStart }: { onStart: () => void }) {
               title={r.title}
               status={statusOf(r.title.id)}
               reasons={r.reasons}
-              onSet={(s) => setStatus(r.title.id, s)}
+              onSet={(s) => setStatus(r.title, s)}
               onReset={() => resetStatus(r.title.id)}
             />
           ))}

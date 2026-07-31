@@ -1,4 +1,5 @@
 import type { Title } from '../types'
+import { languageCode } from './tmdb/genres'
 import POSTERS from './posters.json'
 
 /**
@@ -23,7 +24,22 @@ const STEEL: P = ['#26333f', '#0d1218']
 
 const posters = POSTERS as Record<string, string | undefined>
 
-const t = (x: Title): Title => ({ ...x, posterUrl: x.posterUrl ?? posters[x.id] })
+/** Shape of a hand-written demo entry, before it becomes a `Title`. */
+type LocalEntry = Omit<Title, 'source' | 'languageCode' | 'popularity'> & {
+  popularity: number
+  /** Kept for backwards compatibility; the poster fallback now derives its own. */
+  palette?: [string, string]
+}
+
+const t = (x: LocalEntry): Title => {
+  const { palette: _palette, ...rest } = x
+  return {
+    ...rest,
+    source: 'local',
+    languageCode: languageCode(x.language),
+    posterUrl: x.posterUrl ?? posters[x.id],
+  }
+}
 
 export const CATALOG: Title[] = [
   t({

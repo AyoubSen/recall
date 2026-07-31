@@ -4,6 +4,29 @@ import type { Title } from '../types'
 import { cx } from './ui'
 
 /**
+ * Deterministic gradient for titles without artwork, derived from the id so a
+ * given title always looks the same. Replaces the hand-authored palettes the
+ * local-only catalogue used to carry.
+ */
+const PALETTES: [string, string][] = [
+  ['#1b2030', '#0b0d14'],
+  ['#14304a', '#0a1524'],
+  ['#4a2418', '#180d0a'],
+  ['#4a3a12', '#1a1408'],
+  ['#163a2c', '#08160f'],
+  ['#33184a', '#140820'],
+  ['#4a1420', '#1a070c'],
+  ['#26333f', '#0d1218'],
+]
+
+function gradientFor(id: string): string {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0
+  const [a, b] = PALETTES[Math.abs(h) % PALETTES.length]
+  return `radial-gradient(120% 100% at 20% 0%, ${a} 0%, ${b} 70%)`
+}
+
+/**
  * Renders the remote poster when the catalogue has one, otherwise a generated
  * cinematic poster built from the title's palette. The generated version is
  * also the error fallback, so a dead remote URL degrades silently.
@@ -23,13 +46,7 @@ export function Poster({
   return (
     <div
       className={cx('relative overflow-hidden bg-ink-850', className)}
-      style={
-        showRemote
-          ? undefined
-          : {
-              backgroundImage: `radial-gradient(120% 100% at 20% 0%, ${title.palette[0]} 0%, ${title.palette[1]} 70%)`,
-            }
-      }
+      style={showRemote ? undefined : { backgroundImage: gradientFor(title.id) }}
     >
       {showRemote ? (
         large ? (

@@ -4,12 +4,24 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
-import { CATALOG, YEAR_MAX, YEAR_MIN } from './data/catalog'
-import { matchesFilters } from './data/provider'
-import { rankDeck } from './data/ranking'
+import { CATALOG } from './data/catalog'
+import { catalogProvider, usingTmdb } from './data/provider'
+import {
+  DISCOVERY_KEY,
+  SCHEMA_VERSION,
+  STORAGE_KEY,
+  essentialOf,
+  measureState,
+  saveState,
+  toTitle,
+  type EssentialTitle,
+  type PersistedState,
+} from './data/persistence'
+import { applyBackup, downloadBackup, type BackupFile, type ImportMode } from './data/backup'
 import type {
   DisplayPrefs,
   Filters,
@@ -19,7 +31,9 @@ import type {
   TitleStatus,
 } from './types'
 
-const KEY = 'recall.state.v1'
+export const CURRENT_YEAR = 2026
+export const YEAR_MIN = 1950
+export const YEAR_MAX = CURRENT_YEAR
 
 export const DEFAULT_FILTERS: Filters = {
   types: ['movie', 'series'],
@@ -36,43 +50,81 @@ const DEFAULT_PREFS: DisplayPrefs = {
   showNotWatched: false,
 }
 
-interface PersistedState {
-  onboarded: boolean
-  statuses: Record<string, { status: TitleStatus; at: number }>
-  history: SwipeRecord[]
-  filters: Filters
-  prefs: DisplayPrefs
-}
-
 const initialState: PersistedState = {
+  version: SCHEMA_VERSION,
   onboarded: false,
   statuses: {},
+  titles: {},
   history: [],
   filters: DEFAULT_FILTERS,
   prefs: DEFAULT_PREFS,
 }
 
+/* --------------------------------------------------------------- migration */
+
+const LOCAL_BY_ID = new Map(CATALOG.map((t) => [t.id, t]))
+
+/**
+ * v1 stored only statuses keyed by local catalogue ids and no title metadata.
+ * v2 adds the title cache and stable compound ids. Legacy ids that cannot be
+ * confidently matched to TMDB are preserved as `source: 'legacy'` records
+ * rather than dropped, so nothing the user classified is ever lost.
+ */
+function migrate(raw: Partial<PersistedState> & Record<string, unknown>): PersistedState {
+  const version = typeof raw.version === 'number' ? raw.version : 1
+  const statuses = (raw.statuses ?? {}) as PersistedState['statuses']
+  const titles: Record<string, EssentialTitle> = {
+    ...((raw.titles ?? {}) as Record<string, EssentialTitle>),
+  }
+
+  if (version < 2) {
+    // Hydrate metadata for every classified local title from the bundled
+    // catalogue, marking them legacy so they survive independently of it.
+    for (const id of Object.keys(statuses)) {
+      if (titles[id]) continue
+      const local = LOCAL_BY_ID.get(id)
+      if (local) titles[id] = essentialOf({ ...local, source: 'legacy' })
+    }
+  }
+
+  // v2 stored whole Title objects, including re-fetchable fields. v3 keeps
+  // only the essential record, which is never pruned. Nothing is lost that
+  // Library, Profile, exclusions or exports depend on.
+  for (const [id, t] of Object.entries(titles)) {
+    titles[id] = essentialOf(t as unknown as Title)
+  }
+
+  return {
+    ...initialState,
+    ...raw,
+    version: SCHEMA_VERSION,
+    statuses,
+    titles,
+    history: (raw.history ?? []) as SwipeRecord[],
+    filters: { ...DEFAULT_FILTERS, ...((raw.filters ?? {}) as Partial<Filters>) },
+    prefs: { ...DEFAULT_PREFS, ...((raw.prefs ?? {}) as Partial<DisplayPrefs>) },
+  }
+}
+
 function load(): PersistedState {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return initialState
-    const parsed = JSON.parse(raw) as Partial<PersistedState>
-    return {
-      ...initialState,
-      ...parsed,
-      filters: { ...DEFAULT_FILTERS, ...(parsed.filters ?? {}) },
-      prefs: { ...DEFAULT_PREFS, ...(parsed.prefs ?? {}) },
-    }
+    return migrate(JSON.parse(raw))
   } catch {
     return initialState
   }
 }
 
+/* ------------------------------------------------------------------- store */
+
 interface Store extends PersistedState {
-  /** Titles sorted in *this* browser session — deliberately not persisted. */
   sessionCount: number
+  usingTmdb: boolean
   statusOf: (id: string) => TitleStatus
-  setStatus: (id: string, status: TitleStatus) => void
+  /** Records a status and caches the title's metadata alongside it. */
+  setStatus: (title: Title, status: TitleStatus) => void
+  setStatusById: (id: string, status: TitleStatus) => void
   undo: () => void
   resetStatus: (id: string) => void
   setFilters: (f: Filters) => void
@@ -82,10 +134,17 @@ interface Store extends PersistedState {
   resetOnboarding: () => void
   resetStatuses: () => void
   seedSampleHistory: () => void
-  deck: Title[]
+  /** Set when the last save failed; null while persistence is healthy. */
+  storageError: string | null
+  exportData: () => void
+  importBackup: (backup: BackupFile, mode: ImportMode) => void
+  /** Approximate persisted size in bytes, for the storage diagnostics row. */
+  storageBytes: number
   watchedCount: number
   titlesByStatus: (s: TitleStatus) => Title[]
   profile: TasteProfile
+  /** All classified titles, for genre/decade filter options. */
+  knownTitles: Title[]
 }
 
 const Ctx = createContext<Store | null>(null)
@@ -93,9 +152,18 @@ const Ctx = createContext<Store | null>(null)
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<PersistedState>(load)
   const [sessionCount, setSessionCount] = useState(0)
+  const [storageError, setStorageError] = useState<string | null>(null)
 
+  // Persist on every change. A failure is surfaced rather than "fixed" by
+  // dropping records — the session keeps working in memory and the user is
+  // told their latest changes may not survive a reload.
   useEffect(() => {
-    localStorage.setItem(KEY, JSON.stringify(state))
+    const res = saveState(state)
+    setStorageError((prev) => {
+      if (res.ok) return null
+      // Same failure twice in a row must not re-render or re-notify.
+      return prev === res.reason ? prev : res.reason
+    })
   }, [state])
 
   const statusOf = useCallback(
@@ -103,18 +171,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [state.statuses],
   )
 
-  const setStatus = useCallback((id: string, status: TitleStatus) => {
+  const setStatus = useCallback((title: Title, status: TitleStatus) => {
     setState((s) => {
-      const previousStatus = s.statuses[id]?.status ?? 'unresolved'
+      const previousStatus = s.statuses[title.id]?.status ?? 'unresolved'
       if (previousStatus === status) return s
+      const at = Date.now()
       return {
         ...s,
-        statuses: { ...s.statuses, [id]: { status, at: Date.now() } },
-        history: [...s.history, { titleId: id, status, previousStatus, at: Date.now() }].slice(-200),
+        statuses: { ...s.statuses, [title.id]: { status, at } },
+        // Keep the richer of the two records if details arrived later.
+        titles: {
+          ...s.titles,
+          [title.id]: { ...(s.titles[title.id] ?? {}), ...essentialOf(title) },
+        },
+        history: [
+          ...s.history,
+          { titleId: title.id, status, previousStatus, at },
+        ].slice(-200),
       }
     })
     setSessionCount((c) => c + 1)
   }, [])
+
+  const setStatusById = useCallback(
+    (id: string, status: TitleStatus) => {
+      setState((s) => {
+        const known = s.titles[id]
+        if (!known) return s
+        const previousStatus = s.statuses[id]?.status ?? 'unresolved'
+        if (previousStatus === status) return s
+        const at = Date.now()
+        return {
+          ...s,
+          statuses: { ...s.statuses, [id]: { status, at } },
+          history: [...s.history, { titleId: id, status, previousStatus, at }].slice(-200),
+        }
+      })
+      setSessionCount((c) => c + 1)
+    },
+    [],
+  )
 
   const undo = useCallback(() => {
     setState((s) => {
@@ -149,27 +245,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   )
 
   const resetAll = useCallback(() => {
-    localStorage.removeItem(KEY)
+    localStorage.removeItem(STORAGE_KEY)
+    localStorage.removeItem(DISCOVERY_KEY)
     setState(initialState)
     setSessionCount(0)
+    setStorageError(null)
   }, [])
 
-  const resetOnboarding = useCallback(
-    () => setState((s) => ({ ...s, onboarded: false })),
-    [],
-  )
+  const resetOnboarding = useCallback(() => setState((s) => ({ ...s, onboarded: false })), [])
 
   const resetStatuses = useCallback(() => {
-    setState((s) => ({ ...s, statuses: {}, history: [] }))
+    localStorage.removeItem(DISCOVERY_KEY)
+    setState((s) => ({ ...s, statuses: {}, titles: {}, history: [] }))
     setSessionCount(0)
   }, [])
 
-  /**
-   * Deterministic sample history, for exercising Profile and For You without
-   * swiping through the whole catalogue by hand. Same result every time.
-   */
+  /** Deterministic sample history from the bundled catalogue. */
   const seedSampleHistory = useCallback(() => {
     const statuses: PersistedState['statuses'] = {}
+    const titles: Record<string, EssentialTitle> = {}
     const base = Date.now() - 1000 * 60 * 60 * 24 * 30
     const cycle: TitleStatus[] = [
       'watched',
@@ -186,31 +280,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     CATALOG.forEach((t, i) => {
       if (t.popularity < 55) return
       statuses[t.id] = { status: cycle[i % cycle.length], at: base + i * 60_000 }
+      titles[t.id] = essentialOf(t)
     })
-    setState((s) => ({ ...s, statuses, history: [], onboarded: true }))
+    setState((s) => ({ ...s, statuses, titles, history: [], onboarded: true }))
     setSessionCount(0)
   }, [])
 
-  /** Unresolved titles matching the current filters, recognition-first. */
-  const deck = useMemo(
-    () =>
-      rankDeck(
-        CATALOG.filter((x) => !state.statuses[x.id] && matchesFilters(x, state.filters)),
-      ),
-    [state.statuses, state.filters],
+  const exportData = useCallback(() => downloadBackup(state), [state])
+
+  const importBackup = useCallback((backup: BackupFile, mode: ImportMode) => {
+    setState((s) => applyBackup(s, backup, mode))
+    setSessionCount(0)
+    // Imported titles are already classified, so the deck must rebuild its
+    // candidate pool rather than keep showing them.
+    localStorage.removeItem(DISCOVERY_KEY)
+  }, [])
+
+  const storageBytes = useMemo(() => measureState(state), [state])
+
+  const knownTitles = useMemo(
+    () => Object.values(state.titles).map(toTitle),
+    [state.titles],
   )
 
   const titlesByStatus = useCallback(
-    (s: TitleStatus) =>
-      CATALOG.filter((x) => state.statuses[x.id]?.status === s).sort(
-        (a, b) => (state.statuses[b.id]?.at ?? 0) - (state.statuses[a.id]?.at ?? 0),
-      ),
-    [state.statuses],
+    (want: TitleStatus) =>
+      knownTitles
+        .filter((t) => state.statuses[t.id]?.status === want)
+        .sort((a, b) => (state.statuses[b.id]?.at ?? 0) - (state.statuses[a.id]?.at ?? 0)),
+    [knownTitles, state.statuses],
   )
 
   const watched = useMemo(
-    () => CATALOG.filter((x) => state.statuses[x.id]?.status === 'watched'),
-    [state.statuses],
+    () => titlesByStatus('watched'),
+    [titlesByStatus],
   )
 
   const profile = useMemo<TasteProfile>(() => {
@@ -219,22 +322,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const peopleCount = new Map<string, { count: number; role: 'director' | 'actor' }>()
     let runtime = 0
     let ratingSum = 0
+    let rated = 0
 
     for (const w of watched) {
       for (const g of w.genres) genreCount.set(g, (genreCount.get(g) ?? 0) + 1)
-      const d = `${Math.floor(w.year / 10) * 10}s`
-      decadeCount.set(d, (decadeCount.get(d) ?? 0) + 1)
+      if (w.year) {
+        const d = `${Math.floor(w.year / 10) * 10}s`
+        decadeCount.set(d, (decadeCount.get(d) ?? 0) + 1)
+      }
       if (w.director) {
         const cur = peopleCount.get(w.director)
         peopleCount.set(w.director, { count: (cur?.count ?? 0) + 1, role: 'director' })
       }
-      for (const c of w.cast) {
+      for (const c of w.cast ?? []) {
         if (c === 'Various') continue
         const cur = peopleCount.get(c)
         peopleCount.set(c, { count: (cur?.count ?? 0) + 1, role: cur?.role ?? 'actor' })
       }
-      runtime += w.runtime ?? (w.seasons ?? 1) * 8 * 45
-      ratingSum += w.rating
+      runtime += w.runtime ?? (w.type === 'series' ? (w.seasons ?? 2) * 8 * 45 : 110)
+      if (w.rating) {
+        ratingSum += w.rating
+        rated++
+      }
     }
 
     return {
@@ -250,29 +359,108 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         .map(([name, v]) => ({ name, count: v.count, role: v.role }))
         .filter((p) => p.count > 1)
         .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
-      averageRating: watched.length ? ratingSum / watched.length : 0,
+      averageRating: rated ? ratingSum / rated : 0,
       totalRuntimeMinutes: runtime,
+      watchedIds: watched.map((w) => w.id),
     }
   }, [watched])
+
+  /* ------------------------------------------------ legacy id reconciliation */
+
+  const reconciling = useRef(false)
+
+  useEffect(() => {
+    if (!usingTmdb || state.legacyReconciled || reconciling.current) return
+    const legacy = Object.values(state.titles).filter((t) => t.source === 'legacy')
+    if (!legacy.length) {
+      setState((s) => ({ ...s, legacyReconciled: true }))
+      return
+    }
+
+    // Runs once per page load. Deliberately not aborted on cleanup: under
+    // StrictMode the first mount is torn down immediately, and aborting there
+    // would cancel the only pass the ref guard allows.
+    reconciling.current = true
+
+    ;(async () => {
+      const remap = new Map<string, EssentialTitle>()
+      for (const t of legacy) {
+        try {
+          const res = await catalogProvider.searchTitles(t.title, 1)
+          const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+          // Confident match only: same media type, identical normalized title,
+          // year within one. Anything ambiguous is left as a legacy record.
+          const hit = res.items.find(
+            (c) =>
+              c.type === t.type &&
+              norm(c.title) === norm(t.title) &&
+              c.year > 0 &&
+              Math.abs(c.year - t.year) <= 1,
+          )
+          const ambiguous =
+            res.items.filter(
+              (c) => c.type === t.type && norm(c.title) === norm(t.title) && Math.abs(c.year - t.year) <= 1,
+            ).length > 1
+          if (hit && !ambiguous) {
+            remap.set(
+              t.id,
+              essentialOf({
+                ...hit,
+                runtime: t.runtime ?? hit.runtime,
+                seasons: t.seasons ?? hit.seasons,
+                director: t.director ?? hit.director,
+                cast: t.cast ?? hit.cast,
+              }),
+            )
+          }
+        } catch {
+          // Leave this one legacy and continue with the rest.
+        }
+      }
+
+      setState((s) => {
+        const statuses = { ...s.statuses }
+        const titles = { ...s.titles }
+        for (const [oldId, next] of remap) {
+          if (!statuses[oldId]) continue
+          // Never clobber a status the user already set on the TMDB record.
+          if (!statuses[next.id]) statuses[next.id] = statuses[oldId]
+          delete statuses[oldId]
+          delete titles[oldId]
+          titles[next.id] = next
+        }
+        const history = s.history.map((h) =>
+          remap.has(h.titleId) ? { ...h, titleId: remap.get(h.titleId)!.id } : h,
+        )
+        return { ...s, statuses, titles, history, legacyReconciled: true }
+      })
+    })()
+  }, [state.legacyReconciled, state.titles])
 
   const value: Store = {
     ...state,
     sessionCount,
-    resetOnboarding,
-    resetStatuses,
-    seedSampleHistory,
+    usingTmdb,
     statusOf,
     setStatus,
+    setStatusById,
     undo,
     resetStatus,
     setFilters,
     setPrefs,
     completeOnboarding,
     resetAll,
-    deck,
+    resetOnboarding,
+    resetStatuses,
+    seedSampleHistory,
+    storageError,
+    exportData,
+    importBackup,
+    storageBytes,
     watchedCount: watched.length,
     titlesByStatus,
     profile,
+    knownTitles,
   }
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, Clapperboard, Clock, FlaskConical, Star, Tv, User } from 'lucide-react'
+import { BackupControls } from '../components/BackupControls'
 import { Button, Dialog, EmptyState, Panel, SectionTitle, cx } from '../components/ui'
 import { useStore } from '../store'
 
@@ -118,6 +119,8 @@ export function Profile({ onStart }: { onStart: () => void }) {
         </div>
       </Panel>
 
+      <BackupControls />
+
       <TestControls />
     </div>
   )
@@ -227,7 +230,14 @@ function TestControls() {
           </div>
         }
       >
-        <p className="text-text-mid">{confirming?.body} This cannot be undone.</p>
+        <div className="space-y-4">
+          <p className="text-text-mid">{confirming?.body}</p>
+          <p className="rounded-control border border-skip/30 bg-skip/10 px-4 py-3 text-sm text-skip">
+            This permanently deletes local data in this browser and cannot be undone. Recall has no
+            account and no server copy — if you want to keep this history, close this dialog and use
+            <strong className="font-semibold"> Export data</strong> first.
+          </p>
+        </div>
       </Dialog>
     </details>
   )

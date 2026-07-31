@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Grid2x2, Library as LibraryIcon, List, Search } from 'lucide-react'
 import { PosterCard, TitleRow } from '../components/TitleItem'
 import { EmptyState, IconButton, cx } from '../components/ui'
-import { ALL_GENRES } from '../data/catalog'
+import { CANONICAL_GENRES } from '../data/tmdb/genres'
 import { useStore } from '../store'
 import type { SortKey, TitleStatus } from '../types'
 
@@ -20,7 +20,7 @@ const SORTS: { key: SortKey; label: string }[] = [
 ]
 
 export function Library() {
-  const { titlesByStatus, statusOf, setStatus, resetStatus, prefs, setPrefs } = useStore()
+  const { titlesByStatus, statusOf, setStatusById, resetStatus, prefs, setPrefs } = useStore()
   const [tab, setTab] = useState<TitleStatus>('watched')
   const [query, setQuery] = useState('')
   const [type, setType] = useState<'all' | 'movie' | 'series'>('all')
@@ -32,7 +32,9 @@ export function Library() {
 
   const decades = useMemo(
     () =>
-      Array.from(new Set(base.map((t) => `${Math.floor(t.year / 10) * 10}s`))).sort().reverse(),
+      Array.from(new Set(base.filter((t) => t.year).map((t) => `${Math.floor(t.year / 10) * 10}s`)))
+        .sort()
+        .reverse(),
     [base],
   )
 
@@ -114,7 +116,7 @@ export function Library() {
         </Select>
         <Select value={genre} onChange={setGenre}>
           <option value="all">All genres</option>
-          {ALL_GENRES.map((g) => (
+          {CANONICAL_GENRES.map((g) => (
             <option key={g} value={g}>
               {g}
             </option>
@@ -150,7 +152,7 @@ export function Library() {
               key={t.id}
               title={t}
               status={statusOf(t.id)}
-              onSet={(s) => setStatus(t.id, s)}
+              onSet={(s) => setStatusById(t.id, s)}
               onReset={() => resetStatus(t.id)}
             />
           ))}
@@ -162,7 +164,7 @@ export function Library() {
               key={t.id}
               title={t}
               status={statusOf(t.id)}
-              onSet={(s) => setStatus(t.id, s)}
+              onSet={(s) => setStatusById(t.id, s)}
               onReset={() => resetStatus(t.id)}
             />
           ))}

@@ -132,16 +132,26 @@ export function SwipeCard({
             <span className="rounded-full border border-ink-700 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide">
               {title.type === 'movie' ? 'Movie' : 'Series'}
             </span>
-            <span className="inline-flex items-center gap-1.5">
-              {title.type === 'movie' ? <Clock size={14} /> : <Layers size={14} />}
-              {title.type === 'movie'
-                ? `${title.runtime} min`
-                : `${title.seasons} season${(title.seasons ?? 1) > 1 ? 's' : ''}`}
-            </span>
-            <span className="inline-flex items-center gap-1.5 text-accent">
-              <Star size={14} fill="currentColor" />
-              {title.rating.toFixed(1)}
-            </span>
+            {/* Runtime and season count arrive with the lazy details request,
+                so they are omitted rather than rendered as "undefined". */}
+            {title.type === 'movie' && !!title.runtime && (
+              <span className="inline-flex items-center gap-1.5">
+                <Clock size={14} />
+                {title.runtime} min
+              </span>
+            )}
+            {title.type === 'series' && !!title.seasons && (
+              <span className="inline-flex items-center gap-1.5">
+                <Layers size={14} />
+                {title.seasons} season{title.seasons > 1 ? 's' : ''}
+              </span>
+            )}
+            {title.rating > 0 && (
+              <span className="inline-flex items-center gap-1.5 text-accent">
+                <Star size={14} fill="currentColor" />
+                {title.rating.toFixed(1)}
+              </span>
+            )}
           </div>
         </div>
 

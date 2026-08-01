@@ -236,7 +236,7 @@ function TestControls() {
               onClick={() =>
                 ask(
                   'Reset entire local state',
-                  'Everything Recall has stored in this browser will be deleted.',
+                  'Everything ReelDeck has stored in this browser will be deleted.',
                   resetAll,
                 )
               }
@@ -272,7 +272,7 @@ function TestControls() {
         <div className="space-y-4">
           <p className="text-text-mid">{confirming?.body}</p>
           <p className="rounded-control border border-skip/30 bg-skip/10 px-4 py-3 text-sm text-skip">
-            This permanently deletes local data in this browser and cannot be undone. Recall has no
+            This permanently deletes local data in this browser and cannot be undone. ReelDeck has no
             account and no server copy — if you want to keep this history, close this dialog and use
             <strong className="font-semibold"> Export data</strong> first.
           </p>

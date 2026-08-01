@@ -354,12 +354,12 @@ export function blendViewers(calibrated: Viewer, fit: HistoryFit): Viewer {
 }
 
 /**
- * Development-only inspection hook, mirroring `__recallDiscovery`. The project
+ * Development-only inspection hook, mirroring `__reeldeckDiscovery`. The project
  * has no test runner, so the pure scoring pieces are exposed here to be
  * exercised directly from the console.
  */
 if (import.meta.env.DEV) {
-  ;(globalThis as unknown as Record<string, unknown>).__recallViewer = {
+  ;(globalThis as unknown as Record<string, unknown>).__reeldeckViewer = {
     eraAffinity,
     marketAffinity,
     fitViewer,

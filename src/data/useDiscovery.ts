@@ -583,7 +583,7 @@ export function useDiscovery(
 
   // Development-only inspection hook. Carries no tokens or headers.
   if (import.meta.env.DEV) {
-    ;(window as unknown as Record<string, unknown>).__recallDiscovery = () => ({
+    ;(window as unknown as Record<string, unknown>).__reeldeckDiscovery = () => ({
       ...diagnostics,
       provider: usingTmdb ? 'tmdb' : 'local',
       deck: deck.length,

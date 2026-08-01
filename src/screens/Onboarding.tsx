@@ -52,7 +52,7 @@ export function Onboarding() {
             Remember everything you have ever watched.
           </h1>
           <p className="max-w-lg text-lg leading-relaxed text-text-mid">
-            Rebuilding your viewing history one search at a time is exhausting. Recall shows you
+            Rebuilding your viewing history one search at a time is exhausting. ReelDeck shows you
             titles you might recognise, one at a time, and you just react.
           </p>
         </div>

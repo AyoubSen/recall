@@ -80,7 +80,7 @@ export function recognitionScore(t: Title, viewer?: Viewer): number {
 
 // Development-only inspection hook; see the matching one in viewer.ts.
 if (import.meta.env.DEV) {
-  ;(globalThis as unknown as Record<string, unknown>).__recallRanking = {
+  ;(globalThis as unknown as Record<string, unknown>).__reeldeckRanking = {
     recognitionScore,
     rankDeck: (titles: Title[], seed: Title[], viewer?: Viewer) => rankDeck(titles, seed, viewer),
   }

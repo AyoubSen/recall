@@ -77,6 +77,33 @@ export interface DisplayPrefs {
 
 export type SortKey = 'recent' | 'year' | 'title' | 'rating'
 
+/**
+ * Who is doing the recognising.
+ *
+ * Fitted from the calibration round rather than asked outright, because people
+ * answer "have you seen this?" far more reliably than "what is your taste?".
+ * Every viewer-derived term in ranking is scaled by `confidence`, so a skipped
+ * or uninformative calibration degrades smoothly back to global-fame ordering
+ * instead of guessing hard.
+ */
+export interface Viewer {
+  /** Fitted, not asked. Drives the formative-years curve. 0 = unknown. */
+  birthYear: number
+  /** ISO 639-1 codes the viewer is exposed to, strongest first. */
+  markets: string[]
+  /** 0-1. How much ranking should trust the fit. */
+  confidence: number
+  /** True once calibration has been completed or explicitly skipped. */
+  calibrated: boolean
+}
+
+/** One answered probe from the calibration round. */
+export interface CalibrationAnswer {
+  title: Title
+  /** Skipped probes carry no signal either way. */
+  watched: boolean | null
+}
+
 export interface TasteProfile {
   moviesWatched: number
   seriesWatched: number

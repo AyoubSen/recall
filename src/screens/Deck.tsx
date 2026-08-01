@@ -70,9 +70,14 @@ export function Deck({ onOpenLibrary }: { onOpenLibrary: () => void }) {
     setFilters,
     statuses,
     usingTmdb,
+    liveViewer,
   } = useStore()
 
-  const { deck, loading, error, exhausted, retry, diagnostics } = useDiscovery(filters, statuses)
+  const { deck, loading, error, exhausted, retry, diagnostics } = useDiscovery(
+    filters,
+    statuses,
+    liveViewer,
+  )
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [details, setDetails] = useState<Title | null>(null)
   const committed = useRef<string | null>(null)
@@ -307,6 +312,7 @@ export function Deck({ onOpenLibrary }: { onOpenLibrary: () => void }) {
             {diagnostics.tv.page}/{diagnostics.tv.totalPages}
             {diagnostics.tv.exhausted ? ' END' : ''} · q{diagnostics.queue} s{diagnostics.staging} ·
             done {diagnostics.classified} · pages {diagnostics.pagesThisCycle}
+            {diagnostics.viewer ? ` · ${diagnostics.viewer}` : ' · no viewer'}
           </p>
         )}
         <p className="hidden items-center gap-1.5 text-xs sm:flex">

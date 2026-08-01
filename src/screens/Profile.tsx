@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ChevronDown, Clapperboard, Clock, FlaskConical, Star, Tv, User } from 'lucide-react'
 import { BackupControls } from '../components/BackupControls'
 import { Button, Dialog, EmptyState, Panel, SectionTitle, cx } from '../components/ui'
+import { describeViewer, hasSignal } from '../data/viewer'
 import { useStore } from '../store'
 
 export function Profile({ onStart }: { onStart: () => void }) {
@@ -87,6 +88,8 @@ export function Profile({ onStart }: { onStart: () => void }) {
         </>
       )}
 
+      <ViewerPanel />
+
       <Panel>
         <SectionTitle>Settings</SectionTitle>
         <div className="space-y-5">
@@ -123,6 +126,42 @@ export function Profile({ onStart }: { onStart: () => void }) {
 
       <TestControls />
     </div>
+  )
+}
+
+/**
+ * What the deck currently believes about the viewer, and how to change it.
+ *
+ * Worth surfacing because the fit silently reshapes every card that follows —
+ * an ordering the user cannot see is one they cannot correct.
+ */
+function ViewerPanel() {
+  const { viewer, liveViewer, liveViewerSample, resetOnboarding } = useStore()
+  const calibrated = hasSignal(viewer)
+  const refined = hasSignal(liveViewer)
+  const shown = refined ? liveViewer : viewer
+
+  return (
+    <Panel>
+      <SectionTitle hint={refined ? `${Math.round(liveViewer.confidence * 100)}% confident` : undefined}>
+        Deck calibration
+      </SectionTitle>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="space-y-1">
+          <p className="font-medium">{describeViewer(shown)}</p>
+          <p className="text-sm text-text-mid">
+            {!refined
+              ? 'Answer a few “have you seen this?” questions to tune the deck.'
+              : liveViewerSample > 0
+                ? `Refined from ${liveViewerSample} title${liveViewerSample === 1 ? '' : 's'} you have sorted — it keeps sharpening as you swipe.`
+                : 'Titles from your era and languages are shown first.'}
+          </p>
+        </div>
+        {/* The calibration round lives inside onboarding, so re-running it means
+            re-entering that flow. Classified titles are untouched. */}
+        <Button onClick={resetOnboarding}>{calibrated ? 'Re-calibrate' : 'Calibrate'}</Button>
+      </div>
+    </Panel>
   )
 }
 

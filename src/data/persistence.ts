@@ -1,8 +1,8 @@
-import type { DisplayPrefs, Filters, SwipeRecord, Title, TitleStatus } from '../types'
+import type { DisplayPrefs, Filters, SwipeRecord, Title, TitleStatus, Viewer } from '../types'
 
 export const STORAGE_KEY = 'recall.state.v1'
 export const DISCOVERY_KEY = 'recall.discovery.v1'
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 /**
  * Persisted shape.
@@ -22,6 +22,8 @@ export interface PersistedState {
   history: SwipeRecord[]
   filters: Filters
   prefs: DisplayPrefs
+  /** Fitted by the calibration round; drives viewer-relative deck ordering. */
+  viewer: Viewer
   legacyReconciled?: boolean
 }
 

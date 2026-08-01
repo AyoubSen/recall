@@ -22,6 +22,8 @@ import {
   type PersistedState,
 } from './data/persistence'
 import { applyBackup, downloadBackup, type BackupFile, type ImportMode } from './data/backup'
+import { clearCalibrationCache } from './data/calibration'
+import { DEFAULT_VIEWER, blendViewers, fitFromHistory } from './data/viewer'
 import type {
   DisplayPrefs,
   Filters,
@@ -29,6 +31,7 @@ import type {
   TasteProfile,
   Title,
   TitleStatus,
+  Viewer,
 } from './types'
 
 export const CURRENT_YEAR = 2026
@@ -44,6 +47,9 @@ export const DEFAULT_FILTERS: Filters = {
   popularity: 'balanced',
 }
 
+/** Classifications between refits of the live viewer. See `liveViewer`. */
+const REFIT_EVERY = 10
+
 const DEFAULT_PREFS: DisplayPrefs = {
   libraryView: 'grid',
   librarySort: 'recent',
@@ -58,6 +64,7 @@ const initialState: PersistedState = {
   history: [],
   filters: DEFAULT_FILTERS,
   prefs: DEFAULT_PREFS,
+  viewer: DEFAULT_VIEWER,
 }
 
 /* --------------------------------------------------------------- migration */
@@ -103,6 +110,9 @@ function migrate(raw: Partial<PersistedState> & Record<string, unknown>): Persis
     history: (raw.history ?? []) as SwipeRecord[],
     filters: { ...DEFAULT_FILTERS, ...((raw.filters ?? {}) as Partial<Filters>) },
     prefs: { ...DEFAULT_PREFS, ...((raw.prefs ?? {}) as Partial<DisplayPrefs>) },
+    // v3 and earlier predate the viewer model. Those users stay on the global
+    // fame ordering they already had until they run a calibration round.
+    viewer: { ...DEFAULT_VIEWER, ...((raw.viewer ?? {}) as Partial<Viewer>) },
   }
 }
 
@@ -129,11 +139,20 @@ interface Store extends PersistedState {
   resetStatus: (id: string) => void
   setFilters: (f: Filters) => void
   setPrefs: (p: Partial<DisplayPrefs>) => void
+  /** Replaces the fitted viewer. Re-ranks the deck via the discovery key. */
+  setViewer: (v: Viewer) => void
   completeOnboarding: (f: Filters) => void
   resetAll: () => void
   resetOnboarding: () => void
   resetStatuses: () => void
   seedSampleHistory: () => void
+  /**
+   * The viewer the deck should actually rank with: the calibration fit refined
+   * by everything swiped since. `viewer` remains the calibration answer alone.
+   */
+  liveViewer: Viewer
+  /** Classifications currently feeding `liveViewer`. */
+  liveViewerSample: number
   /** Set when the last save failed; null while persistence is healthy. */
   storageError: string | null
   exportData: () => void
@@ -239,6 +258,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   )
 
+  const setViewer = useCallback((viewer: Viewer) => setState((s) => ({ ...s, viewer })), [])
+
   const completeOnboarding = useCallback(
     (filters: Filters) => setState((s) => ({ ...s, filters, onboarded: true })),
     [],
@@ -247,12 +268,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const resetAll = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY)
     localStorage.removeItem(DISCOVERY_KEY)
+    clearCalibrationCache()
     setState(initialState)
     setSessionCount(0)
     setStorageError(null)
   }, [])
 
-  const resetOnboarding = useCallback(() => setState((s) => ({ ...s, onboarded: false })), [])
+  /** Sends the user back through onboarding, calibration included. */
+  const resetOnboarding = useCallback(() => {
+    clearCalibrationCache()
+    setState((s) => ({ ...s, onboarded: false, viewer: DEFAULT_VIEWER }))
+  }, [])
 
   const resetStatuses = useCallback(() => {
     localStorage.removeItem(DISCOVERY_KEY)
@@ -365,6 +391,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [watched])
 
+  /**
+   * The live viewer, refit on a cadence rather than on every swipe.
+   *
+   * Each refit re-ranks the pending deck, so recomputing per swipe would keep
+   * the queue permanently in motion. The memo is keyed on a bucketed count, so
+   * it recomputes once every REFIT_EVERY classifications and is otherwise free.
+   */
+  const classifiedCount = Object.keys(state.statuses).length
+  const refitBucket = Math.floor(classifiedCount / REFIT_EVERY)
+
+  const { liveViewer, liveViewerSample } = useMemo(
+    () => {
+      const fit = fitFromHistory(knownTitles, state.statuses)
+      return { liveViewer: blendViewers(state.viewer, fit), liveViewerSample: fit.sample }
+    },
+    // Intentionally *not* keyed on knownTitles: that changes on every swipe and
+    // would defeat the cadence. When the bucket does flip, the memo recomputes
+    // against the current titles and statuses anyway.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [refitBucket, state.viewer],
+  )
+
   /* ------------------------------------------------ legacy id reconciliation */
 
   const reconciling = useRef(false)
@@ -448,11 +496,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     resetStatus,
     setFilters,
     setPrefs,
+    setViewer,
     completeOnboarding,
     resetAll,
     resetOnboarding,
     resetStatuses,
     seedSampleHistory,
+    liveViewer,
+    liveViewerSample,
     storageError,
     exportData,
     importBackup,

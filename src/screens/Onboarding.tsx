@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { ArrowLeft, ArrowRight, ArrowUp, Search, Sparkles } from 'lucide-react'
+import { CalibrationRound } from '../components/CalibrationRound'
 import { FiltersForm } from '../components/FiltersDialog'
 import { Button } from '../components/ui'
 import { DEFAULT_FILTERS, useStore } from '../store'
-import type { Filters } from '../types'
+import type { CalibrationAnswer, Filters, Viewer } from '../types'
 
 const RULES = [
   { icon: ArrowRight, color: 'text-watched', title: 'Swipe right', body: 'You have watched it.' },
@@ -13,9 +14,32 @@ const RULES = [
 ]
 
 export function Onboarding() {
-  const { completeOnboarding } = useStore()
-  const [step, setStep] = useState<'intro' | 'setup'>('intro')
+  const { completeOnboarding, setViewer, setStatus } = useStore()
+  const [step, setStep] = useState<'intro' | 'calibrate' | 'setup'>('intro')
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS)
+
+  /**
+   * Calibration answers are real classifications, so they are recorded as such.
+   * The round doubles as the first few swipes instead of being a throwaway
+   * quiz, and the deck will not ask about these titles again.
+   */
+  const finishCalibration = useCallback(
+    (viewer: Viewer, answers: CalibrationAnswer[]) => {
+      setViewer(viewer)
+      for (const a of answers) {
+        if (a.watched === null) continue
+        setStatus(a.title, a.watched ? 'watched' : 'not_watched')
+      }
+      setStep('setup')
+    },
+    [setViewer, setStatus],
+  )
+
+  const skipCalibration = useCallback(() => setStep('setup'), [])
+
+  if (step === 'calibrate') {
+    return <CalibrationRound onDone={finishCalibration} onSkip={skipCalibration} />
+  }
 
   if (step === 'intro') {
     return (
@@ -50,7 +74,7 @@ export function Onboarding() {
           ))}
         </div>
 
-        <Button variant="primary" size="lg" fullWidth onClick={() => setStep('setup')}>
+        <Button variant="primary" size="lg" fullWidth onClick={() => setStep('calibrate')}>
           Start remembering
         </Button>
       </div>
@@ -70,7 +94,7 @@ export function Onboarding() {
       <FiltersForm value={filters} onChange={setFilters} />
 
       <div className="mt-4 flex gap-3 border-t border-ink-800 pt-8">
-        <Button variant="ghost" size="lg" onClick={() => setStep('intro')}>
+        <Button variant="ghost" size="lg" onClick={() => setStep('calibrate')}>
           Back
         </Button>
         <Button variant="primary" fullWidth size="lg" onClick={() => completeOnboarding(filters)}>

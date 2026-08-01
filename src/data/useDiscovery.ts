@@ -3,7 +3,8 @@ import { catalogProvider, usingTmdb } from './provider'
 import { voteLadder } from './providers/tmdb'
 import { describeError } from './tmdb/client'
 import { rankDeck } from './ranking'
-import type { Filters, MediaType, Title, TitleStatus } from '../types'
+import { hasSignal } from './viewer'
+import type { Filters, MediaType, Title, TitleStatus, Viewer } from '../types'
 
 /**
  * Buffered, paginated discovery.
@@ -30,9 +31,19 @@ const NO_PROGRESS_LIMIT = 10
 const MAX_SKIPS_PER_CYCLE = 40
 
 const PROGRESS_KEY = 'recall.discovery.v1'
-const PROGRESS_VERSION = 2
+/** v2 keys embedded the viewer; those entries are stale now that it is excluded. */
+const PROGRESS_VERSION = 3
 const MAX_TRACKED_FILTERS = 4
 
+/**
+ * Identity of a deck configuration.
+ *
+ * Deliberately *excludes* the viewer. Page cursors record which TMDB pages have
+ * been fetched, which is a question about the catalogue, not about how the
+ * results were ordered. Since the viewer is now refit continuously, folding it
+ * in here would restart paging every few swipes. A viewer change instead
+ * re-ranks the already-buffered queue in place — see `rankRevision`.
+ */
 export function filterKey(f: Filters): string {
   return JSON.stringify([
     [...f.types].sort(),
@@ -42,6 +53,59 @@ export function filterKey(f: Filters): string {
     [...f.languages].sort(),
     f.popularity,
   ])
+}
+
+/** Stable identity of a viewer's effect on ordering. */
+function viewerSignature(v?: Viewer): string {
+  return hasSignal(v) ? `${v.birthYear}|${[...v.markets].sort().join(',')}|${v.confidence}` : ''
+}
+
+/**
+ * Cards at the head of the queue that a re-rank must not disturb — the visible
+ * card and its immediate successors, which would otherwise change under the
+ * user's finger mid-swipe.
+ */
+const RERANK_KEEP = 3
+
+/** Every Nth slot ignores the viewer, so no bucket can starve permanently. */
+const EXPLORE_EVERY = 7
+
+/**
+ * Interleave a viewer-ranked ordering with an unbiased one.
+ *
+ * The rate-based fit is robust to *unequal* exposure but cannot recover a bucket
+ * with *zero* exposure — no exposure means no rate, and no rate means nothing to
+ * revise the fit with. Reserving a slot for the globally-ranked candidate keeps
+ * every bucket sampled, so the fit can always be corrected by evidence.
+ */
+function withExploration(titles: Title[], seed: Title[], viewer?: Viewer): Title[] {
+  if (!hasSignal(viewer)) return rankDeck(titles, seed)
+
+  const tuned = rankDeck(titles, seed, viewer)
+  const explore = rankDeck(titles, seed)
+  const used = new Set<string>()
+  const out: Title[] = []
+  let ti = 0
+  let ei = 0
+
+  while (out.length < tuned.length) {
+    const exploring = out.length > 0 && out.length % EXPLORE_EVERY === 0
+    const from = exploring ? explore : tuned
+    const cursor = exploring ? () => ei++ : () => ti++
+    let picked: Title | undefined
+    while (!picked) {
+      const idx = cursor()
+      if (idx >= from.length) break
+      if (!used.has(from[idx].id)) picked = from[idx]
+    }
+    // The preferred list is exhausted of unused entries; take from the other.
+    if (!picked) picked = tuned.find((t) => !used.has(t.id)) ?? explore.find((t) => !used.has(t.id))
+    if (!picked) break
+    used.add(picked.id)
+    out.push(picked)
+  }
+
+  return out
 }
 
 /* ---------------------------------------------------------------- progress */
@@ -89,6 +153,10 @@ function loadProgress(): Record<string, ProgressEntry> {
       }
       return out
     }
+
+    // v2 keys embedded the viewer, so they can never match a v3 filterKey and
+    // would only crowd out live entries. Drop them rather than carry them.
+    if (raw.version !== PROGRESS_VERSION) return {}
 
     const entries = (raw as ProgressFile).entries ?? {}
     const out: Record<string, ProgressEntry> = {}
@@ -200,6 +268,8 @@ export interface DiscoveryDiagnostics {
   classified: number
   pagesThisCycle: number
   lastError: string | null
+  /** Compact viewer summary, e.g. `b1995 c0.8 en,fr` — empty when uncalibrated. */
+  viewer: string
 }
 
 export interface DiscoveryState {
@@ -215,8 +285,12 @@ export interface DiscoveryState {
 export function useDiscovery(
   filters: Filters,
   statuses: Record<string, { status: TitleStatus }>,
+  viewer?: Viewer,
 ): DiscoveryState {
   const key = useMemo(() => filterKey(filters), [filters])
+  const viewerSig = viewerSignature(viewer)
+  /** Bumped on every in-place re-rank; see the `deck` memo. */
+  const [rankRevision, setRankRevision] = useState(0)
 
   const ref = useRef<Internals>(freshInternals(key))
   const [, forceRender] = useState(0)
@@ -234,13 +308,16 @@ export function useDiscovery(
     [filters.types],
   )
 
-  const flushStaging = useCallback((force: boolean) => {
-    const st = ref.current
-    if (!st.staging.length) return
-    if (!force && st.staging.length < RANK_WINDOW) return
-    st.queue = st.queue.concat(rankDeck(st.staging, st.queue.slice(-6)))
-    st.staging = []
-  }, [])
+  const flushStaging = useCallback(
+    (force: boolean) => {
+      const st = ref.current
+      if (!st.staging.length) return
+      if (!force && st.staging.length < RANK_WINDOW) return
+      st.queue = st.queue.concat(withExploration(st.staging, st.queue.slice(-6), viewer))
+      st.staging = []
+    },
+    [viewer],
+  )
 
   const unresolvedCount = useCallback(() => {
     const s = statusesRef.current
@@ -418,10 +495,31 @@ export function useDiscovery(
     return () => abortRef.current?.abort()
   }, [key, pump])
 
+  /**
+   * Re-rank the buffered queue when the viewer changes.
+   *
+   * The alternative — invalidating the whole deck, as a viewer-aware
+   * `filterKey` used to — would restart TMDB paging every few swipes now that
+   * the fit is continuous. The head of the queue is preserved so the card the
+   * user is currently looking at does not change under them.
+   */
+  const lastSig = useRef(viewerSig)
+  useEffect(() => {
+    if (lastSig.current === viewerSig) return
+    lastSig.current = viewerSig
+    const st = ref.current
+    if (st.queue.length <= RERANK_KEEP) return
+    const head = st.queue.slice(0, RERANK_KEEP)
+    st.queue = [...head, ...withExploration(st.queue.slice(RERANK_KEEP), head, viewer)]
+    setRankRevision((n) => n + 1)
+  }, [viewerSig, viewer])
+
   const deck = useMemo(
     () => ref.current.queue.filter((t) => !statuses[t.id]),
+    // `rankRevision` is essential: an in-place re-rank leaves `queue.length`
+    // untouched, so without it this memo would keep serving the stale order.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [statuses, ref.current.queue.length, loading, error],
+    [statuses, ref.current.queue.length, rankRevision, loading, error],
   )
 
   /**
@@ -478,6 +576,9 @@ export function useDiscovery(
     classified: Object.keys(statuses).length,
     pagesThisCycle: st.pagesThisCycle,
     lastError: error,
+    viewer: hasSignal(viewer)
+      ? `b${viewer.birthYear} c${viewer.confidence} ${viewer.markets.slice(0, 3).join(',')}`
+      : '',
   }
 
   // Development-only inspection hook. Carries no tokens or headers.
@@ -488,6 +589,9 @@ export function useDiscovery(
       deck: deck.length,
       pumping: st.pumping,
       needsMore: st.needsMore,
+      // Enough of each card to check the deck's composition against the fitted
+      // viewer without reaching into the DOM.
+      titles: deck.map((t) => ({ y: t.year, l: t.languageCode, t: t.title })),
     })
   }
 

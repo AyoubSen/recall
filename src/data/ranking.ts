@@ -1,5 +1,6 @@
-import type { Title } from '../types'
+import type { Title, Viewer } from '../types'
 import { FRANCHISE, ICONIC } from './deckMeta'
+import { eraAffinity, fameOf, hasSignal, marketAffinity } from './viewer'
 
 /**
  * Recognition-first deck ordering.
@@ -20,8 +21,15 @@ import { FRANCHISE, ICONIC } from './deckMeta'
 
 const CURRENT_YEAR = 2026
 
-/** 0-100. Higher = more likely the average viewer recognises it instantly. */
-export function recognitionScore(t: Title): number {
+/**
+ * 0-100. Higher = more likely *this* viewer recognises it instantly.
+ *
+ * Without a `viewer` the result is the global fame prior, unchanged — which is
+ * what the demo catalogue and an uncalibrated user get. With one, two
+ * viewer-relative terms are blended in, both scaled by the fit's confidence so
+ * a weak calibration can only nudge the ordering, never dominate it.
+ */
+export function recognitionScore(t: Title, viewer?: Viewer): number {
   let score = t.popularity * 0.62
 
   // How many people bothered to rate it is the strongest single signal of
@@ -37,22 +45,45 @@ export function recognitionScore(t: Title): number {
 
   // Both ends of the age range are recognisable to different crowds, so the
   // deck spans eras instead of clustering on one.
+  //
+  // Note there is no bonus for being *new*. Recency is a reach signal for a
+  // recommender, but this deck asks what you have already seen, and a title
+  // released this year — or not yet released — is close to a guaranteed "no".
+  // Promoting those spends deck slots on the one answer we can predict.
   if (t.year) {
     const age = CURRENT_YEAR - t.year
-    if (age <= 6) score += 4
+    if (age < 1) score -= 10
     else if (age >= 30 && t.popularity >= 55) score += 3
   } else {
     // Unreleased or dateless entries are rarely recognisable.
     score -= 15
   }
 
-  // Non-English titles are recognised less widely at equal popularity.
-  if (t.languageCode ? t.languageCode !== 'en' : t.language !== 'English') score -= 6
+  if (hasSignal(viewer)) {
+    // Did this land inside the viewer's own watching life? Fame is passed in so
+    // the pre-birth penalty spares the canon.
+    score += eraAffinity(t.year, viewer.birthYear, fameOf(t)) * viewer.confidence
+    // Language exposure relative to this viewer, not to English.
+    const code = t.languageCode ?? (t.language === 'English' ? 'en' : undefined)
+    score += marketAffinity(code, viewer.markets) * viewer.confidence
+  } else {
+    // No fit to work from: non-English titles are recognised less widely at
+    // equal popularity, on average across everyone.
+    if (t.languageCode ? t.languageCode !== 'en' : t.language !== 'English') score -= 6
+  }
 
   // Nothing to show and nothing to recognise.
   if (!t.posterUrl) score -= 12
 
   return Math.max(0, Math.min(100, score))
+}
+
+// Development-only inspection hook; see the matching one in viewer.ts.
+if (import.meta.env.DEV) {
+  ;(globalThis as unknown as Record<string, unknown>).__recallRanking = {
+    recognitionScore,
+    rankDeck: (titles: Title[], seed: Title[], viewer?: Viewer) => rankDeck(titles, seed, viewer),
+  }
 }
 
 const decadeOf = (t: Title) => (t.year ? Math.floor(t.year / 10) * 10 : 0)
@@ -81,7 +112,7 @@ const franchiseOf = (t: Title) => t.franchise ?? FRANCHISE[t.id]?.franchise
 const franchiseOrderOf = (t: Title) => t.franchiseOrder ?? FRANCHISE[t.id]?.order
 
 /** Penalty for placing `t` next, given what was just placed. */
-function diversityPenalty(t: Title, run: RecentRun): number {
+function diversityPenalty(t: Title, run: RecentRun, viewer?: Viewer): number {
   let penalty = 0
 
   const recentGenres = run.genres.slice(-3).flat()
@@ -106,7 +137,7 @@ function diversityPenalty(t: Title, run: RecentRun): number {
 
   const lastScores = run.scores.slice(-2)
   if (lastScores.length === 2 && lastScores.every((s) => s < 55)) {
-    penalty += Math.max(0, 60 - recognitionScore(t)) * 0.8
+    penalty += Math.max(0, 60 - recognitionScore(t, viewer)) * 0.8
   }
 
   return penalty
@@ -118,7 +149,12 @@ function diversityPenalty(t: Title, run: RecentRun): number {
  * `seed` is the tail of what has already been queued, so a newly ranked batch
  * does not repeat whatever the user just saw.
  */
-export function rankDeck(titles: Title[], seed: Title[] = [], lookahead = 14): Title[] {
+export function rankDeck(
+  titles: Title[],
+  seed: Title[] = [],
+  viewer?: Viewer,
+  lookahead = 14,
+): Title[] {
   // A series is one card. Guard against a provider emitting per-season rows.
   const seen = new Set<string>()
   const pool = titles
@@ -129,7 +165,7 @@ export function rankDeck(titles: Title[], seed: Title[] = [], lookahead = 14): T
       seen.add(t.id)
       return true
     })
-    .map((t) => ({ t, score: recognitionScore(t) }))
+    .map((t) => ({ t, score: recognitionScore(t, viewer) }))
     .sort((a, b) => b.score - a.score || a.t.id.localeCompare(b.t.id))
 
   const run = emptyRun()
@@ -140,7 +176,7 @@ export function rankDeck(titles: Title[], seed: Title[] = [], lookahead = 14): T
     run.languages.push(s.languageCode)
     run.directors.push(s.director)
     run.franchises.push(franchiseOf(s))
-    run.scores.push(recognitionScore(s))
+    run.scores.push(recognitionScore(s, viewer))
   }
 
   const placed = new Set<string>()
@@ -169,7 +205,7 @@ export function rankDeck(titles: Title[], seed: Title[] = [], lookahead = 14): T
 
     for (const [i, c] of candidates.entries()) {
       if (blockedByFranchise(c.t) && candidates.length > 1) continue
-      const value = c.score - diversityPenalty(c.t, run) - i * 2.5
+      const value = c.score - diversityPenalty(c.t, run, viewer) - i * 2.5
       if (value > bestValue) {
         bestValue = value
         best = c

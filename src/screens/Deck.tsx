@@ -80,6 +80,7 @@ export function Deck({ onOpenLibrary }: { onOpenLibrary: () => void }) {
   )
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [details, setDetails] = useState<Title | null>(null)
+  /** The card `commit` has already resolved, guarding a double action. */
   const committed = useRef<string | null>(null)
 
   const current = deck[0]
@@ -118,6 +119,14 @@ export function Deck({ onOpenLibrary }: { onOpenLibrary: () => void }) {
       controller.abort()
     }
   }, [current])
+
+  // The guard only has to span the gap between a commit and the deck advancing,
+  // so it is released as soon as a different card is on top. Undo puts the card
+  // that was just resolved back at the head — without this, its id would still
+  // be latched and it could never be resolved again, leaving the deck stuck.
+  useEffect(() => {
+    committed.current = null
+  }, [current?.id])
 
   const commit = useCallback(
     (status: TitleStatus) => {

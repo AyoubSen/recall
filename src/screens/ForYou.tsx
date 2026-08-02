@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import { TitleRow } from '../components/TitleItem'
 import { Button, EmptyState } from '../components/ui'
@@ -10,6 +10,20 @@ export function ForYou({ onStart }: { onStart: () => void }) {
     useStore()
   const [recs, setRecs] = useState<Recommendation[]>([])
   const [loading, setLoading] = useState(false)
+
+  /**
+   * What the recommendations are actually built from.
+   *
+   * Deliberately *not* the whole `statuses` map. Sorting the deck resolves a
+   * title every second or so, and almost all of those answers are "not
+   * watched", which cannot change what gets recommended. Refetching on the
+   * whole map meant every swipe aborted a run of six sequential TMDB requests
+   * and started it again, so on a slow connection the page never settled and
+   * only a reload — landing here with nothing else in flight — let it finish.
+   * Resolved titles are dropped from the results below instead, with no
+   * network round trip at all.
+   */
+  const seedKey = profile.watchedIds.join(',')
 
   useEffect(() => {
     // Anything already resolved (watched, not watched, watchlist, unsure) is excluded.
@@ -32,9 +46,13 @@ export function ForYou({ onStart }: { onStart: () => void }) {
       cancelled = true
       controller.abort()
     }
-    // knownTitles is only used for genre weighting; recompute on status change.
+    // `profile`, `statuses` and `knownTitles` are all read fresh on each run;
+    // only the watched library decides when a new run is worth making.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, statuses])
+  }, [seedKey])
+
+  // Resolving a row hides it immediately, without discarding the rest.
+  const visible = useMemo(() => recs.filter((r) => !statuses[r.title.id]), [recs, statuses])
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-6 px-5 py-6">
@@ -57,13 +75,13 @@ export function ForYou({ onStart }: { onStart: () => void }) {
             </Button>
           }
         />
-      ) : loading && recs.length === 0 ? (
+      ) : loading && visible.length === 0 ? (
         <EmptyState
           icon={<Loader2 size={22} className="animate-spin" />}
           title="Building your recommendations"
           body="Looking at what the titles you have watched are related to."
         />
-      ) : recs.length === 0 ? (
+      ) : visible.length === 0 ? (
         <EmptyState
           icon={<Sparkles size={22} />}
           title="No recommendations yet"
@@ -71,7 +89,7 @@ export function ForYou({ onStart }: { onStart: () => void }) {
         />
       ) : (
         <div className="space-y-3">
-          {recs.map((r) => (
+          {visible.map((r) => (
             <TitleRow
               key={r.title.id}
               title={r.title}

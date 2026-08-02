@@ -19,6 +19,9 @@ interface TmdbListResponse {
  */
 const MAX_PAGES = 500
 
+/** Watched titles used to seed For You. One sequential request each. */
+const REC_SEEDS = 6
+
 /**
  * Vote-count floors per popularity mode, as an ordered ladder.
  *
@@ -152,9 +155,21 @@ export const tmdbProvider: CatalogProvider = {
     known: Title[],
     signal?: AbortSignal,
   ) {
-    // Seed from the most recently watched titles rather than the whole library,
-    // to keep this to a handful of requests.
-    const seeds = profile.watchedIds.map(parseId).filter(Boolean).slice(0, 6) as {
+    // Seeding is capped at a handful of requests, so which titles get to be
+    // seeds decides the whole page. Taking the most recent watches alone made a
+    // single mark able to hijack it — mark one children's film and every row
+    // becomes a children's film. Half the slots stay recent, so a new watch is
+    // reflected straight away; the rest are spread evenly across the library, so
+    // the page keeps reading like the whole of what the viewer has seen.
+    const ids = profile.watchedIds
+    const recent = ids.slice(0, Math.ceil(REC_SEEDS / 2))
+    const rest = ids.slice(recent.length)
+    const wanted = REC_SEEDS - recent.length
+    const step = wanted > 0 ? Math.max(1, Math.floor(rest.length / wanted)) : 1
+    const spread: string[] = []
+    for (let i = 0; i < rest.length && spread.length < wanted; i += step) spread.push(rest[i])
+
+    const seeds = [...recent, ...spread].map(parseId).filter(Boolean) as {
       type: MediaType
       tmdbId: number
     }[]

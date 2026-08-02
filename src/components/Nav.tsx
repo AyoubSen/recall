@@ -25,7 +25,7 @@ export function TopNav({
     <header className="sticky top-0 z-30 hidden border-b border-ink-800 bg-ink-950/90 backdrop-blur md:block">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-8 px-6">
         <span className="text-lg font-bold tracking-tight">
-          Re<span className="text-accent">call</span>
+          Reel<span className="text-accent">Dex</span>
         </span>
 
         <nav className="flex items-center gap-1">

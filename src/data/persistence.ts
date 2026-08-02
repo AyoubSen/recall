@@ -134,8 +134,8 @@ export function saveState(state: PersistedState): SaveResult {
     return {
       ok: false,
       reason: quota
-        ? 'This browser’s storage for ReelDeck is full.'
-        : 'This browser refused to save ReelDeck’s data.',
+        ? 'This browser’s storage for ReelDex is full.'
+        : 'This browser refused to save ReelDex’s data.',
     }
   }
 }

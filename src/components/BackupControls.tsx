@@ -57,7 +57,7 @@ export function BackupControls() {
           <span>
             <span className="block text-sm font-medium">Export data</span>
             <span className="block text-sm text-text-low">
-              Downloads everything ReelDeck stores about you as a JSON file. No tokens are included.
+              Downloads everything ReelDex stores about you as a JSON file. No tokens are included.
             </span>
           </span>
           <Button icon={<Download size={16} />} onClick={exportData}>

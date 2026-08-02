@@ -43,7 +43,7 @@ export function buildBackup(state: PersistedState): BackupFile {
 
 export function backupFilename(date = new Date()): string {
   const iso = date.toISOString().slice(0, 10)
-  return `reeldeck-backup-${iso}.json`
+  return `reeldex-backup-${iso}.json`
 }
 
 export function downloadBackup(state: PersistedState) {
@@ -92,7 +92,7 @@ export function validateBackup(raw: string): ValidationResult {
   }
 
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return { ok: false, error: 'That file does not contain a ReelDeck backup.' }
+    return { ok: false, error: 'That file does not contain a ReelDex backup.' }
   }
 
   const b = parsed as Partial<BackupFile>
@@ -100,7 +100,7 @@ export function validateBackup(raw: string): ValidationResult {
   if (b.format !== BACKUP_FORMAT) {
     return {
       ok: false,
-      error: 'That is not a ReelDeck backup file (missing the ReelDeck format marker).',
+      error: 'That is not a ReelDex backup file (missing the ReelDex format marker).',
     }
   }
   if (typeof b.formatVersion !== 'number') {
@@ -109,7 +109,7 @@ export function validateBackup(raw: string): ValidationResult {
   if (b.formatVersion > BACKUP_VERSION) {
     return {
       ok: false,
-      error: `This backup was made by a newer version of ReelDeck (format v${b.formatVersion}, this app reads up to v${BACKUP_VERSION}).`,
+      error: `This backup was made by a newer version of ReelDex (format v${b.formatVersion}, this app reads up to v${BACKUP_VERSION}).`,
     }
   }
   if (typeof b.statuses !== 'object' || b.statuses === null || Array.isArray(b.statuses)) {
